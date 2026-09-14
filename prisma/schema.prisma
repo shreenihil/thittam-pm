@@ -1,0 +1,433 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model Department {
+  id                      String              @id @default(cuid())
+  name                    String              @unique
+  description             String?
+  isSystem                Boolean             @default(false)
+  isBuiltIn               Boolean             @default(false)
+  status                  String              @default("ACTIVE") // "ACTIVE" | "DECOMMISSIONED"
+  users                   User[]
+  teams                   Team[]
+  projects                Project[]
+  targetSupportRequests   SupportRequest[]    @relation("RequestedTargetDept")
+  fromDeptRequests        DepartmentRequest[] @relation("FromDept")
+  toDeptRequests          DepartmentRequest[] @relation("ToDept")
+  createdAt               DateTime            @default(now())
+}
+
+model Team {
+  id           String     @id @default(cuid())
+  name         String
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id], onDelete: Cascade)
+  leadId       String?
+  lead         User?      @relation("TeamLeadUser", fields: [leadId], references: [id])
+  members      User[]     @relation("TeamMembers")
+  projects     Project[]
+  createdAt    DateTime   @default(now())
+
+  @@index([departmentId])
+  @@index([leadId])
+}
+
+model User {
+  id                 String    @id @default(cuid())
+  name               String
+  email              String    @unique
+  passwordHash       String
+  mustResetPassword  Boolean   @default(true)
+  role               String    // "ADMIN" | "HR" | "HOD" | "TEAM_LEAD" | "EMPLOYEE" | "INTERN" | "CONTRACTOR" | "CLIENT" | "VIEWER"
+  designation        String?   // e.g. "Software Engineer"
+  departmentId       String?
+  department         Department? @relation(fields: [departmentId], references: [id])
+  teamId             String?
+  team               Team?     @relation("TeamMembers", fields: [teamId], references: [id])
+  weeklyCapacityHours Int      @default(40)
+  isActive           Boolean   @default(true)
+  createdAt          DateTime  @default(now())
+
+  failedLoginAttempts Int       @default(0)
+  lockoutUntil        DateTime?
+  sessions            Session[]
+
+  teamsLed                Team[]                  @relation("TeamLeadUser")
+  projectsCreated         Project[]               @relation("CreatedBy")
+  projectsAsPoc           Project[]               @relation("PointOfContact")
+  projectMemberships      ProjectMember[]
+  taskAssignments         Task[]                  @relation("TaskAssignee")
+  timelineEntries         TimelineEntry[]
+  supportRequestsSent     SupportRequest[]        @relation("RequestedBy")
+  supportRequestsToMe     SupportRequest[]        @relation("RequestedOf")
+  departmentRequestsSent  DepartmentRequest[]     @relation("RequestedByHod")
+  departmentRequestsForMe DepartmentRequest[]     @relation("TargetEmployee")
+  departmentHistories     DepartmentHistory[]     @relation("DeptHistoryEmployee")
+  departmentHistoriesMade DepartmentHistory[]     @relation("DeptHistoryActor")
+  notifications           Notification[]
+  notificationPreference  NotificationPreference?
+  delegationsGiven        ApprovalDelegation[]    @relation("DelegatorUser")
+  delegationsReceived     ApprovalDelegation[]    @relation("DelegateUser")
+  comments                Comment[]
+  attachmentsUploaded     Attachment[]
+
+  @@index([departmentId])
+  @@index([teamId])
+  @@index([role, isActive])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  user         User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  expiresAt    DateTime
+  lastActiveAt DateTime @default(now())
+  createdAt    DateTime @default(now())
+
+  @@index([userId])
+  @@index([sessionToken])
+  @@index([lastActiveAt])
+  @@index([userId, expiresAt])
+}
+
+model Project {
+  id                  String        @id @default(cuid())
+  projectNumber       String        @unique     // e.g. "GEN-0001"
+  title               String
+  description         String
+  departmentId        String
+  department          Department    @relation(fields: [departmentId], references: [id])
+  teamId              String?
+  team                Team?         @relation(fields: [teamId], references: [id])
+  status              String        @default("PENDING_APPROVAL") // PENDING_APPROVAL, IN_PROGRESS, SUPPORT_REQUIRED, ON_HOLD, COMPLETED, CANCELLED, REJECTED
+  priority            String        @default("MEDIUM")           // LOW, MEDIUM, HIGH, URGENT
+  approvalStage       String?       @default("HOD")             // "TEAM_LEAD" | "HOD" | "APPROVED"
+  version             Int           @default(1)
+
+  pointOfContactId    String?
+  pointOfContact      User?         @relation("PointOfContact", fields: [pointOfContactId], references: [id])
+
+  createdById         String
+  createdBy           User          @relation("CreatedBy", fields: [createdById], references: [id])
+
+  assignedDate        DateTime?
+  dueDate             DateTime?
+  timeOfAllocation    DateTime?      // server-stamped on approval + first assignment; never manually editable
+
+  teamLeadApprovedById String?
+  teamLeadApprovedAt  DateTime?
+  teamLeadApprovalNote String?
+
+  approvedById        String?
+  approvalNote        String?
+  rejectionReason     String?
+  supportRequiredNote String?
+
+  members             ProjectMember[]
+  tasks               Task[]
+  milestones          Milestone[]
+  labels              ProjectLabel[]
+  timelineEntries     TimelineEntry[]
+  supportRequests     SupportRequest[]
+  comments            Comment[]
+  attachments         Attachment[]
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  @@index([departmentId])
+  @@index([teamId])
+  @@index([status])
+  @@index([priority])
+  @@index([approvalStage])
+  @@index([createdById])
+  @@index([pointOfContactId])
+  @@index([dueDate])
+}
+
+model Milestone {
+  id          String   @id @default(cuid())
+  projectId   String
+  project     Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  title       String
+  description String?
+  dueDate     DateTime
+  isCompleted Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([projectId])
+  @@index([dueDate])
+}
+
+model Label {
+  id            String         @id @default(cuid())
+  name          String         @unique
+  color         String         // e.g. "#6366f1"
+  createdAt     DateTime       @default(now())
+  projectLabels ProjectLabel[]
+  taskLabels    TaskLabel[]
+}
+
+model ProjectLabel {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  labelId   String
+  label     Label    @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, labelId])
+  @@index([labelId])
+}
+
+model TaskLabel {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id], onDelete: Cascade)
+  labelId   String
+  label     Label    @relation(fields: [labelId], references: [id], onDelete: Cascade)
+
+  @@unique([taskId, labelId])
+  @@index([labelId])
+}
+
+model ProjectMember {
+  id        String   @id @default(cuid())
+  projectId String
+  project   Project  @relation(fields: [projectId], references: [id])
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  isLead    Boolean  @default(false)
+  addedVia  String   // "assigned" | "support_request"
+  addedAt   DateTime @default(now())
+  @@unique([projectId, userId])
+  @@index([userId])
+}
+
+model Task {
+  id          String     @id @default(cuid())
+  taskNumber  String     @unique              // e.g. "GEN-0001-T1"
+  projectId   String
+  project     Project    @relation(fields: [projectId], references: [id])
+  title       String
+  description String?
+  status      String     @default("TODO")     // TODO, IN_PROGRESS, SUPPORT_REQUIRED, ON_HOLD, DONE, CANCELLED
+  priority    String     @default("MEDIUM")   // LOW, MEDIUM, HIGH, URGENT
+  version     Int        @default(1)
+  assigneeId  String?
+  assignee    User?      @relation("TaskAssignee", fields: [assigneeId], references: [id])
+  startDate   DateTime?
+  dueDate     DateTime?
+  estimatedHours Float?
+  createdAt   DateTime   @default(now())
+
+  timelineEntries TimelineEntry[]
+  subtasks        Subtask[]
+  labels          TaskLabel[]
+  comments        Comment[]
+  attachments     Attachment[]
+  blockedBy       TaskDependency[] @relation("BlockedTask")
+  blocking        TaskDependency[] @relation("BlockingTask")
+
+  @@index([projectId])
+  @@index([assigneeId])
+  @@index([status])
+  @@index([priority])
+  @@index([assigneeId, status])
+}
+
+model TaskDependency {
+  id             String @id @default(cuid())
+  taskId         String                        // the blocked task
+  task           Task   @relation("BlockedTask", fields: [taskId], references: [id])
+  dependsOnTaskId String                        // the task it's waiting on
+  dependsOnTask  Task   @relation("BlockingTask", fields: [dependsOnTaskId], references: [id])
+  @@unique([taskId, dependsOnTaskId])
+}
+
+model Subtask {
+  id        String   @id @default(cuid())
+  taskId    String
+  task      Task     @relation(fields: [taskId], references: [id])
+  title     String
+  isDone    Boolean  @default(false)
+  order     Int      @default(0)
+  createdAt DateTime @default(now())
+}
+
+model Comment {
+  id        String   @id @default(cuid())
+  projectId String?
+  project   Project? @relation(fields: [projectId], references: [id])
+  taskId    String?
+  task      Task?    @relation(fields: [taskId], references: [id])
+  authorId  String
+  author    User     @relation(fields: [authorId], references: [id])
+  body      String
+  createdAt DateTime @default(now())
+}
+
+model Attachment {
+  id         String   @id @default(cuid())
+  projectId  String?
+  project    Project? @relation(fields: [projectId], references: [id])
+  taskId     String?
+  task       Task?    @relation(fields: [taskId], references: [id])
+  fileName   String
+  filePath   String
+  fileSize   Int
+  mimeType   String
+  uploadedById String
+  uploadedBy   User    @relation(fields: [uploadedById], references: [id])
+  createdAt  DateTime @default(now())
+}
+
+model TimelineEntry {
+  id         String   @id @default(cuid())
+  projectId  String
+  project    Project  @relation(fields: [projectId], references: [id])
+  taskId     String?
+  task       Task?    @relation(fields: [taskId], references: [id])
+  userId     String
+  user       User     @relation(fields: [userId], references: [id])
+  entryDate  DateTime @default(now())
+  note       String
+  hoursSpent Float?
+  createdAt  DateTime @default(now())
+}
+
+model SupportRequest {
+  id                  String     @id @default(cuid())
+  kind                String     @default("PEOPLE_HELP") // "PEOPLE_HELP" | "ISSUE_ESCALATION"
+  projectId           String?
+  project             Project?   @relation(fields: [projectId], references: [id])
+  requestedById       String
+  requestedBy         User       @relation("RequestedBy", fields: [requestedById], references: [id])
+
+  targetDepartmentId  String
+  targetDepartment    Department @relation("RequestedTargetDept", fields: [targetDepartmentId], references: [id])
+  targetTeamId        String?
+
+  targetUserId        String?
+  targetUser          User?      @relation("RequestedOf", fields: [targetUserId], references: [id])
+
+  reason              String
+  urgency             String     @default("NORMAL") // NORMAL, HIGH, URGENT
+  status              String     @default("PENDING_HOD_REVIEW") // PENDING_TEAM_LEAD_REVIEW, PENDING_HOD_REVIEW, ESCALATED_TO_ADMIN, FORWARDED_TO_USER, RESOLVED, ACCEPTED, DECLINED, REJECTED
+
+  reviewedByTeamLeadId String?
+  teamLeadNote        String?
+  reviewedByHodId     String?
+  hodNote             String?
+  escalatedToAdminId  String?
+  adminNote           String?
+
+  createdAt           DateTime   @default(now())
+  resolvedAt          DateTime?
+
+  @@index([requestedById])
+  @@index([targetDepartmentId])
+  @@index([targetTeamId])
+  @@index([status])
+  @@index([kind])
+}
+
+model DepartmentRequest {
+  id                String      @id @default(cuid())
+  requestType       String      // "CLAIM_UNASSIGNED" | "TRANSFER"
+  employeeId        String
+  employee          User        @relation("TargetEmployee", fields: [employeeId], references: [id])
+
+  fromDepartmentId  String?
+  fromDepartment    Department? @relation("FromDept", fields: [fromDepartmentId], references: [id])
+
+  toDepartmentId    String
+  toDepartment      Department  @relation("ToDept", fields: [toDepartmentId], references: [id])
+
+  requestedById     String
+  requestedBy       User        @relation("RequestedByHod", fields: [requestedById], references: [id])
+
+  status            String      @default("PENDING") // PENDING, APPROVED, REJECTED
+  reason            String?
+  adminNote         String?
+
+  createdAt         DateTime    @default(now())
+  resolvedAt        DateTime?
+
+  @@index([employeeId])
+  @@index([employeeId, status])
+  @@index([requestedById])
+  @@index([status])
+}
+
+model DepartmentHistory {
+  id                 String   @id @default(cuid())
+  employeeId         String
+  employee           User     @relation("DeptHistoryEmployee", fields: [employeeId], references: [id])
+  fromDepartmentName String?
+  toDepartmentName   String
+  changedById        String
+  changedBy          User     @relation("DeptHistoryActor", fields: [changedById], references: [id])
+  reason             String?
+  createdAt          DateTime @default(now())
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  type      String   // "ticket_pending" | "ticket_approved" | "ticket_rejected" | "assigned" | "department_assigned" | "department_request_pending" | "department_request_resolved" | "status_changed" | "comment_added" | "support_request_pending" | "support_request_resolved"
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead])
+}
+
+model NotificationPreference {
+  id                 String  @id @default(cuid())
+  userId             String  @unique
+  user               User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  muteComments       Boolean @default(false)
+  muteStatusChanges  Boolean @default(false)
+  muteAssignments    Boolean @default(false)
+  muteApprovals      Boolean @default(false)
+  muteSupportRequests Boolean @default(false)
+}
+
+model ApprovalDelegation {
+  id          String   @id @default(cuid())
+  delegatorId String
+  delegator   User     @relation("DelegatorUser", fields: [delegatorId], references: [id], onDelete: Cascade)
+  delegateId  String
+  delegate    User     @relation("DelegateUser", fields: [delegateId], references: [id], onDelete: Cascade)
+  startDate   DateTime @default(now())
+  endDate     DateTime?
+  isActive    Boolean  @default(true)
+  reason      String?
+  createdAt   DateTime @default(now())
+
+  @@index([delegatorId])
+  @@index([delegateId])
+  @@index([isActive])
+}
+
+model ActivityLog {
+  id         String   @id @default(cuid())
+  entityType String   // "project" | "task" | "user" | "support_request" | "department" | "department_request" | "milestone"
+  entityId   String
+  action     String   // "created" | "updated" | "approved" | "rejected" | "assigned" | "transferred" | ...
+  actorId    String
+  meta       String?  // JSON string containing diff { before, after }
+  createdAt  DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([entityType, entityId])
+}

@@ -1,0 +1,31 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      - DATABASE_URL=postgresql://thittam:thittampass@postgres:5432/thittam_pm?schema=public
+      - JWT_SECRET=thittam-pm-lan-secret-key-2026-v2-super-secure
+      - UPLOAD_DIR=/data/uploads
+    volumes:
+      - uploads_data:/data/uploads
+    depends_on:
+      - postgres
+
+  postgres:
+    image: postgres:16-alpine
+    restart: always
+    environment:
+      POSTGRES_USER: thittam
+      POSTGRES_PASSWORD: thittampass
+      POSTGRES_DB: thittam_pm
+    ports:
+      - "5432:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+
+volumes:
+  pg_data:
+  uploads_data:
